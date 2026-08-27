@@ -42,6 +42,13 @@ void main() {
           VideoPoint(1, 1),
           VideoPoint(0, 1),
         ],
+        hockeyFeatureObservations: [
+          RinkFeatureObservation(
+            featureId: 'left-blue-far',
+            imagePoint: VideoPoint(0.381, 0),
+            rinkPoint: RinkPoint(22.86, 0),
+          ),
+        ],
       ),
       status: DatasetSessionStatus.readyForReview,
       createdAtMs: 1,
@@ -52,6 +59,11 @@ void main() {
 
     expect(restored.taskSnapshot.title, task.title);
     expect(restored.calibration.rinkProfileId, 'training-60x30');
+    expect(restored.calibration.hockeyFeatureObservations, hasLength(1));
+    expect(
+      restored.calibration.hockeyFeatureObservations.single.featureId,
+      'left-blue-far',
+    );
   });
 
   test('only clear reviewed observations are eligible for edge training', () {

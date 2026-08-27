@@ -287,6 +287,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
   VideoPlayerController? _videoController;
   String? _videoPath;
   final _imageCorners = <VideoPoint>[];
+  final _hockeyFeatureObservations = <RinkFeatureObservation>[];
+  var _collectingHockeyFeatures = false;
   late Future<List<TaskDefinition>> _tasks;
   String? _selectedTaskId;
   String _selectedProfileId = rinkProfiles.first.id;
@@ -322,6 +324,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
         _videoController = next;
         _videoPath = path;
         _imageCorners.clear();
+        _hockeyFeatureObservations.clear();
+        _collectingHockeyFeatures = false;
         _message = '左奥 → 右奥 → 右手前 → 左手前の順に、リンク外周を4点タップします。';
       });
     } catch (_) {
@@ -348,6 +352,87 @@ class _CaptureScreenState extends State<CaptureScreen> {
     });
   }
 
+  RinkProfile get _selectedProfile => rinkProfileById(_selectedProfileId);
+
+  HockeyLineFeaturePoint? get _nextHockeyFeature {
+    final features = _selectedProfile.hockeyFeaturePoints;
+    if (_hockeyFeatureObservations.length >= features.length) {
+      return null;
+    }
+    return features[_hockeyFeatureObservations.length];
+  }
+
+  ManualRinkCalibration? get _currentCalibration {
+    if (_imageCorners.length != 4) {
+      return null;
+    }
+    try {
+      final calibration = ManualRinkCalibration(
+        rinkProfileId: _selectedProfileId,
+        imageCorners: _imageCorners,
+        hockeyFeatureObservations: _hockeyFeatureObservations,
+      );
+      calibration.imageToRink;
+      return calibration;
+    } on Object {
+      return null;
+    }
+  }
+
+  void _addCalibrationPoint(
+    TapDownDetails details,
+    BoxConstraints constraints,
+  ) {
+    if (_imageCorners.length < 4) {
+      _addCorner(details, constraints);
+      return;
+    }
+    if (!_collectingHockeyFeatures || _videoController == null) {
+      return;
+    }
+    final feature = _nextHockeyFeature;
+    if (feature == null) {
+      setState(() {
+        _collectingHockeyFeatures = false;
+        _message = 'ホッケーライン特徴点をすべて記録しました。';
+      });
+      return;
+    }
+    final point = VideoPoint(
+      (details.localPosition.dx / constraints.maxWidth).clamp(0, 1).toDouble(),
+      (details.localPosition.dy / constraints.maxHeight).clamp(0, 1).toDouble(),
+    );
+    setState(() {
+      _hockeyFeatureObservations.add(
+        RinkFeatureObservation(
+          featureId: feature.id,
+          imagePoint: point,
+          rinkPoint: feature.rinkPoint,
+        ),
+      );
+      final next = _nextHockeyFeature;
+      if (next == null) {
+        _collectingHockeyFeatures = false;
+        _message = 'ホッケーライン特徴点をすべて記録しました。';
+      } else {
+        _message = '次の特徴点: ${next.label} をタップしてください。';
+      }
+    });
+  }
+
+  void _toggleHockeyFeatureCollection() {
+    if (_imageCorners.length != 4) {
+      return;
+    }
+    setState(() {
+      _collectingHockeyFeatures = !_collectingHockeyFeatures;
+      final feature = _nextHockeyFeature;
+      _message = _collectingHockeyFeatures && feature != null
+          ? 'ホッケーラインの ${feature.label} をタップしてください。'
+          : 'ホッケーライン特徴点の追加を停止しました。';
+    });
+  }
+
   Future<void> _saveSession(List<TaskDefinition> tasks) async {
     final videoController = _videoController;
     final videoPath = _videoPath;
@@ -363,6 +448,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
     final calibration = ManualRinkCalibration(
       rinkProfileId: _selectedProfileId,
       imageCorners: List<VideoPoint>.unmodifiable(_imageCorners),
+      hockeyFeatureObservations: List<RinkFeatureObservation>.unmodifiable(
+        _hockeyFeatureObservations,
+      ),
     );
     try {
       calibration.imageToRink;
@@ -452,7 +540,11 @@ class _CaptureScreenState extends State<CaptureScreen> {
                           .toList(growable: false),
                       onChanged: (value) {
                         if (value != null) {
-                          setState(() => _selectedProfileId = value);
+                          setState(() {
+                            _selectedProfileId = value;
+                            _hockeyFeatureObservations.clear();
+                            _collectingHockeyFeatures = false;
+                          });
                         }
                       },
                     ),
@@ -476,7 +568,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
                 aspectRatio: videoController?.value.aspectRatio ?? 16 / 9,
                 child: LayoutBuilder(
                   builder: (context, constraints) => GestureDetector(
-                    onTapDown: (details) => _addCorner(details, constraints),
+                    onTapDown: (details) =>
+                        _addCalibrationPoint(details, constraints),
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
@@ -493,12 +586,52 @@ class _CaptureScreenState extends State<CaptureScreen> {
                         ),
                         IgnorePointer(
                           child: CustomPaint(
-                            painter: _CornerPainter(_imageCorners),
+                            painter: _CalibrationPainter(
+                              corners: _imageCorners,
+                              hockeyLines: _selectedProfile.hockeyLines,
+                              hockeyFeatureObservations:
+                                  _hockeyFeatureObservations,
+                              calibration: _currentCalibration,
+                            ),
                           ),
                         ),
                       ],
                     ),
                   ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('ホッケーライン特徴点（任意・精度確認用）'),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_hockeyFeatureObservations.length}/${_selectedProfile.hockeyFeaturePoints.length} 点を記録',
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed:
+                          _imageCorners.length != 4 ||
+                              _nextHockeyFeature == null
+                          ? null
+                          : _toggleHockeyFeatureCollection,
+                      icon: Icon(
+                        _collectingHockeyFeatures
+                            ? Icons.pause_circle_outline
+                            : Icons.add_location_alt_outlined,
+                      ),
+                      label: Text(
+                        _collectingHockeyFeatures
+                            ? '特徴点の追加を停止'
+                            : 'ホッケーライン特徴点を追加',
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -509,6 +642,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
                   : () {
                       setState(() {
                         _imageCorners.clear();
+                        _hockeyFeatureObservations.clear();
+                        _collectingHockeyFeatures = false;
                         _message = '校正点をリセットしました。左奥から指定し直してください。';
                       });
                     },
@@ -811,13 +946,45 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 }
 
-class _CornerPainter extends CustomPainter {
-  const _CornerPainter(this.points);
+class _CalibrationPainter extends CustomPainter {
+  const _CalibrationPainter({
+    required this.corners,
+    required this.hockeyLines,
+    required this.hockeyFeatureObservations,
+    required this.calibration,
+  });
 
-  final List<VideoPoint> points;
+  final List<VideoPoint> corners;
+  final List<HockeyLineReference> hockeyLines;
+  final List<RinkFeatureObservation> hockeyFeatureObservations;
+  final ManualRinkCalibration? calibration;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final points = corners;
+    final activeCalibration = calibration;
+    if (activeCalibration != null) {
+      try {
+        final homography = activeCalibration.imageToRink;
+        for (final hockeyLine in hockeyLines) {
+          final start = homography.rinkToImage(hockeyLine.startM);
+          final end = homography.rinkToImage(hockeyLine.endM);
+          final paint = Paint()
+            ..color = hockeyLine.id.contains('blue')
+                ? const Color(0xff2888d8)
+                : const Color(0xffed4b42)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.5;
+          canvas.drawLine(
+            Offset(start.u * size.width, start.v * size.height),
+            Offset(end.u * size.width, end.v * size.height),
+            paint,
+          );
+        }
+      } on Object {
+        // Invalid calibration is represented by the absence of projected lines.
+      }
+    }
     final line = Paint()
       ..color = const Color(0xffffcf48)
       ..style = PaintingStyle.stroke
@@ -850,11 +1017,23 @@ class _CornerPainter extends CustomPainter {
       )..layout();
       text.paint(canvas, center - Offset(text.width / 2, text.height / 2));
     }
+    final featureDot = Paint()..color = const Color(0xff71e6dd);
+    for (final observation in hockeyFeatureObservations) {
+      final point = observation.imagePoint;
+      canvas.drawCircle(
+        Offset(point.u * size.width, point.v * size.height),
+        7,
+        featureDot,
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(covariant _CornerPainter oldDelegate) =>
-      oldDelegate.points != points;
+  bool shouldRepaint(covariant _CalibrationPainter oldDelegate) =>
+      oldDelegate.corners.length != corners.length ||
+      oldDelegate.hockeyFeatureObservations.length !=
+          hockeyFeatureObservations.length ||
+      oldDelegate.calibration?.rinkProfileId != calibration?.rinkProfileId;
 }
 
 class _EmptyCard extends StatelessWidget {

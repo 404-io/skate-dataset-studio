@@ -1,9 +1,12 @@
+import 'dart:math' as math;
+
 import 'points.dart';
 
 const _epsilon = 1e-8;
 
 /// Projective mapping from normalized video coordinates to rink-floor metres.
-/// Four non-collinear correspondences solve the eight free matrix values.
+/// Four non-collinear correspondences solve the eight free matrix values;
+/// extra points are fitted with least squares.
 class Homography {
   const Homography._(this._values);
 
@@ -51,6 +54,75 @@ class Homography {
     return Homography._([..._solve(matrix, target), 1]);
   }
 
+  /// Fits a homography to four or more correspondence pairs.
+  ///
+  /// Four corner taps set the plane. Optional hockey-line features make the
+  /// system over-determined, so tapping noise is distributed by least squares.
+  factory Homography.fromPointPairs({
+    required List<VideoPoint> imagePoints,
+    required List<RinkPoint> rinkPoints,
+  }) {
+    if (imagePoints.length != rinkPoints.length || imagePoints.length < 4) {
+      throw ArgumentError(
+        'A homography needs at least four corresponding point pairs.',
+      );
+    }
+    if (imagePoints.length == 4) {
+      return Homography.fromFourPointPairs(
+        imagePoints: imagePoints,
+        rinkPoints: rinkPoints,
+      );
+    }
+
+    final matrix = <List<double>>[];
+    final target = <double>[];
+    for (var index = 0; index < imagePoints.length; index++) {
+      final source = imagePoints[index];
+      final destination = rinkPoints[index];
+      matrix.add([
+        source.u,
+        source.v,
+        1,
+        0,
+        0,
+        0,
+        -source.u * destination.xM,
+        -source.v * destination.xM,
+      ]);
+      target.add(destination.xM);
+      matrix.add([
+        0,
+        0,
+        0,
+        source.u,
+        source.v,
+        1,
+        -source.u * destination.yM,
+        -source.v * destination.yM,
+      ]);
+      target.add(destination.yM);
+    }
+
+    final normalMatrix = List<List<double>>.generate(
+      8,
+      (row) => List<double>.generate(8, (column) {
+        var total = 0.0;
+        for (final equation in matrix) {
+          total += equation[row] * equation[column];
+        }
+        return total;
+      }),
+    );
+    final normalTarget = List<double>.generate(8, (column) {
+      var total = 0.0;
+      for (var row = 0; row < matrix.length; row++) {
+        total += matrix[row][column] * target[row];
+      }
+      return total;
+    });
+    return Homography._([..._solve(normalMatrix, normalTarget), 1]);
+  }
+
   RinkPoint imageToRink(VideoPoint point) {
     final projected = _project(point.u, point.v);
     return RinkPoint(projected.$1, projected.$2);
@@ -59,6 +131,24 @@ class Homography {
   VideoPoint rinkToImage(RinkPoint point) {
     final projected = inverse()._project(point.xM, point.yM);
     return VideoPoint(projected.$1, projected.$2);
+  }
+
+  /// Root-mean-square rink-plane error in metres for correspondence pairs.
+  double rinkRmsError({
+    required List<VideoPoint> imagePoints,
+    required List<RinkPoint> rinkPoints,
+  }) {
+    if (imagePoints.length != rinkPoints.length || imagePoints.isEmpty) {
+      throw ArgumentError('Error measurement needs equally sized point pairs.');
+    }
+    var squaredError = 0.0;
+    for (var index = 0; index < imagePoints.length; index++) {
+      final projected = imageToRink(imagePoints[index]);
+      final dx = projected.xM - rinkPoints[index].xM;
+      final dy = projected.yM - rinkPoints[index].yM;
+      squaredError += dx * dx + dy * dy;
+    }
+    return math.sqrt(squaredError / imagePoints.length);
   }
 
   Homography inverse() {
