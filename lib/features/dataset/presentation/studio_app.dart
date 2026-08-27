@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 import '../../../core/geometry/points.dart';
 import '../../../core/rink/rink_profile.dart';
 import '../../tasks/domain/task_definition.dart';
+import '../../tasks/presentation/task_notation_editor_screen.dart';
 import '../data/dataset_repository.dart';
 import '../domain/dataset_models.dart';
 
@@ -132,6 +133,20 @@ class _TaskLibraryScreenState extends State<TaskLibraryScreen> {
     setState(() => _tasks = widget.repository.listTasks());
   }
 
+  Future<void> _openNotationEditor() async {
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) =>
+            TaskNotationEditorScreen(repository: widget.repository),
+      ),
+    );
+    if (created == true && mounted) {
+      _reload();
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('課題を記法から保存しました。')));
+    }
+  }
+
   Future<void> _createFirstTask() async {
     final titleController = TextEditingController(
       text: 'Forward outside circle',
@@ -213,6 +228,12 @@ class _TaskLibraryScreenState extends State<TaskLibraryScreen> {
             const SizedBox(height: 8),
             const Text('以前のテンプレートは読み込みません。ここで作成した課題だけが、この新しいデータセットの期待値になります。'),
             const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _openNotationEditor,
+              icon: const Icon(Icons.code_outlined),
+              label: const Text('記法から課題を作成'),
+            ),
+            const SizedBox(height: 8),
             FilledButton.icon(
               onPressed: _createFirstTask,
               icon: const Icon(Icons.add),
