@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -8,7 +7,7 @@ import 'package:video_player/video_player.dart';
 import '../../../core/geometry/points.dart';
 import '../../../core/rink/rink_profile.dart';
 import '../../tasks/domain/task_definition.dart';
-import '../../tasks/presentation/task_notation_editor_screen.dart';
+import '../../tasks/domain/supported_task_templates.dart';
 import '../data/dataset_repository.dart';
 import '../domain/dataset_models.dart';
 
@@ -22,8 +21,21 @@ class DatasetStudioApp extends StatefulWidget {
 class _DatasetStudioAppState extends State<DatasetStudioApp> {
   final DatasetRepository _repository = SqliteDatasetRepository();
   var _selectedIndex = 0;
+  late final Future<void> _catalogReady;
 
   static const _titles = ['課題', '収録', 'データセット'];
+
+  @override
+  void initState() {
+    super.initState();
+    _catalogReady = _seedSupportedTaskTemplates();
+  }
+
+  Future<void> _seedSupportedTaskTemplates() async {
+    for (final template in buildSupportedTaskTemplates()) {
+      await _repository.saveTask(template.task);
+    }
+  }
 
   @override
   void dispose() {
@@ -76,13 +88,26 @@ class _DatasetStudioAppState extends State<DatasetStudioApp> {
       ),
       home: Scaffold(
         appBar: AppBar(title: Text(_titles[_selectedIndex])),
-        body: IndexedStack(
-          index: _selectedIndex,
-          children: [
-            TaskLibraryScreen(repository: _repository),
-            CaptureScreen(repository: _repository),
-            DatasetSessionListScreen(repository: _repository),
-          ],
+        body: FutureBuilder<void>(
+          future: _catalogReady,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return const Center(
+                child: Text('固定課題を準備できませんでした。アプリを再起動してください。'),
+              );
+            }
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            return IndexedStack(
+              index: _selectedIndex,
+              children: [
+                TaskLibraryScreen(repository: _repository),
+                CaptureScreen(repository: _repository),
+                DatasetSessionListScreen(repository: _repository),
+              ],
+            );
+          },
         ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: _selectedIndex,
@@ -129,115 +154,25 @@ class _TaskLibraryScreenState extends State<TaskLibraryScreen> {
     _tasks = widget.repository.listTasks();
   }
 
-  void _reload() {
-    setState(() => _tasks = widget.repository.listTasks());
-  }
-
-  Future<void> _openNotationEditor() async {
-    final created = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (context) =>
-            TaskNotationEditorScreen(repository: widget.repository),
-      ),
-    );
-    if (created == true && mounted) {
-      _reload();
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('課題を記法から保存しました。')));
-    }
-  }
-
-  Future<void> _createFirstTask() async {
-    final titleController = TextEditingController(
-      text: 'Forward outside circle',
-    );
-    final title = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('新しい課題'),
-        content: TextField(
-          controller: titleController,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: '課題名',
-            helperText: '最初の課題には編集可能な円弧を1つ作成します。',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('キャンセル'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(context, titleController.text.trim()),
-            child: const Text('作成'),
-          ),
-        ],
-      ),
-    );
-    if (title == null || title.isEmpty) {
-      return;
-    }
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final task = TaskDefinition(
-      id: newDatasetId('task', now, 0),
-      title: title,
-      createdAtMs: now,
-      footChangeGapM: 0.22,
-      primitives: const [
-        ArcGuidePrimitive(
-          subpathId: 'left-1',
-          centerM: RinkPoint(9, 9),
-          radiusM: 3,
-          startAngleRad: math.pi,
-          sweepAngleRad: math.pi * 2,
-        ),
-      ],
-      segments: const [
-        TaskSegment(
-          id: 'segment-1',
-          primitiveIndex: 0,
-          expectedEdge: SkatingEdge(
-            foot: Foot.left,
-            travel: TravelDirection.forward,
-            side: EdgeSide.outside,
-          ),
-        ),
-      ],
-    );
-    await widget.repository.saveTask(task);
-    if (!mounted) {
-      return;
-    }
-    _reload();
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('新しい独立課題を作成しました。')));
-  }
-
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<TaskDefinition>>(
       future: _tasks,
       builder: (context, snapshot) {
-        final tasks = snapshot.data ?? const <TaskDefinition>[];
+        final tasks = (snapshot.data ?? const <TaskDefinition>[])
+            .where((task) => supportedTaskIds.contains(task.id))
+            .toList(growable: false);
+        final templatesById = {
+          for (final template in buildSupportedTaskTemplates())
+            template.task.id: template,
+        };
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
             Text('課題ライブラリ', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 8),
-            const Text('以前のテンプレートは読み込みません。ここで作成した課題だけが、この新しいデータセットの期待値になります。'),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: _openNotationEditor,
-              icon: const Icon(Icons.code_outlined),
-              label: const Text('記法から課題を作成'),
-            ),
-            const SizedBox(height: 8),
-            FilledButton.icon(
-              onPressed: _createFirstTask,
-              icon: const Icon(Icons.add),
-              label: const Text('課題を作成'),
+            const Text(
+              'この初期版では、指定されたフォア・チェンジ・ハーフ・サークル（左右）とワルツ（スリー）ステップだけを収録・比較します。',
             ),
             const SizedBox(height: 16),
             if (snapshot.connectionState == ConnectionState.waiting)
@@ -245,28 +180,39 @@ class _TaskLibraryScreenState extends State<TaskLibraryScreen> {
             else if (tasks.isEmpty)
               const _EmptyCard(
                 icon: Icons.route_outlined,
-                text: 'まだ課題がありません。最初の課題を作成してから動画を収録します。',
+                text: '固定課題を読み込めませんでした。アプリを再起動してください。',
               )
             else
-              ...tasks.map(
-                (task) => Padding(
+              ...tasks.map((task) {
+                final template = templatesById[task.id]!;
+                return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Card(
-                    child: ListTile(
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.gesture_outlined),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            task.title,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(template.summary),
+                          const SizedBox(height: 10),
+                          Text(
+                            '期待エッジ: ${task.segments.map((segment) => segment.expectedEdge.notation).join(' → ')}',
+                          ),
+                          const SizedBox(height: 8),
+                          ...template.coachingPoints.map(
+                            (point) => Text('• $point'),
+                          ),
+                        ],
                       ),
-                      title: Text(task.title),
-                      subtitle: Text(
-                        task.segments
-                            .map((segment) => segment.expectedEdge.notation)
-                            .join(' → '),
-                      ),
-                      trailing: Text(task.validate().isEmpty ? '有効' : '要確認'),
                     ),
                   ),
-                ),
-              ),
+                );
+              }),
           ],
         );
       },
@@ -497,7 +443,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
     return FutureBuilder<List<TaskDefinition>>(
       future: _tasks,
       builder: (context, snapshot) {
-        final tasks = snapshot.data ?? const <TaskDefinition>[];
+        final tasks = (snapshot.data ?? const <TaskDefinition>[])
+            .where((task) => supportedTaskIds.contains(task.id))
+            .toList(growable: false);
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [

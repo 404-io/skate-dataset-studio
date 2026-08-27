@@ -6,10 +6,11 @@ This repository is intentionally independent of earlier skating applications and
 
 ## Current first milestone
 
-- Create new task definitions from explicit line and circular-arc primitives.
-- Preserve semantic expectations for foot, forward/backward travel, and inside/outside edge.
-- Keep a separate subpath and physical gap for a foot change.
-- Select one smartphone video and calibrate it with four rink boundary correspondences.
+- Fixed initial task catalogue: Forward Change Half Circle (right start), Forward Change Half Circle (left start), and Waltz Three Step.
+- Express each guide with circular arcs in rink-floor metres and retain expected foot, direction, and edge per segment.
+- Make foot changes separate subpaths with a measured physical gap.
+- Mark the Waltz Three Step's count-3 turn as `RFO (count 1-3)` followed by `RBO (after three turn)`.
+- Select one smartphone video and calibrate it with four rink boundary correspondences plus optional hockey-line features.
 - Convert normalized image coordinates to rink-floor metres with a 3x3 homography.
 - Store task snapshots, source-video URIs, manual calibration, and review labels in on-device SQLite.
 - Keep expected task edges separate from verified observed edges. Only clear, expert-confirmed observations qualify for future classifier training.
@@ -62,8 +63,8 @@ flutter test --no-test-assets
 
 ## Next milestones
 
-1. Add an editor for multi-segment task notation and explicit AR guide geometry.
-2. Add hockey-line-assisted calibration and a visual top-down rink review.
+1. Attach the reference videos and add timing markers for the Waltz count-3 turn and each foot change.
+2. Add a visual top-down rink review using the hockey-line-assisted calibration already stored with a session.
 3. Add native video/pose pre-annotation, supporting-foot candidates, and review timeline ranges.
 4. Add ARCore/ARKit rink anchors and an OpenXR Quest replay client using this same data contract.
 5. Train and validate edge and turn classifiers only from verified labels.
