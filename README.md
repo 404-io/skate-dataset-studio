@@ -25,6 +25,24 @@ normalized video point (u, v) --homography--> rink point (xM, yM)
 The same rink coordinate contract will later drive trajectory comparison, AR anchoring, and Quest VR replay. Pixel values are retained only as source-video audit evidence.
 
 ## Development
+## Task notation
+
+Task guides use an explicit line-based format. Every curve or line includes its
+expected edge and subpath; a foot change must begin a different subpath and
+meet the declared gap in rink metres.
+
+```text
+task Forward outside eight
+gap 0.22
+arc left-circle LFO left-circle 10 8 3 180 -180
+arc right-circle RBO right-circle 16.22 8 3 180 180
+```
+
+`arc` columns are: segment id, edge, subpath, centre-x-m, centre-y-m,
+radius-m, start-degrees, sweep-degrees. `line` uses: segment id, edge,
+subpath, start-x-m, start-y-m, end-x-m, end-y-m. Supported edge codes are
+`LFO`, `LFI`, `LBO`, `LBI`, `RFO`, `RFI`, `RBO`, and `RBI`.
+
 
 The project path deliberately contains English-only folder names:
 
